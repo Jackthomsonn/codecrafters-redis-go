@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -27,26 +27,56 @@ func main() {
 	}
 }
 
+func parseRedisCommand(readBytes []byte) (string, string) {
+	bytesAsString := string(readBytes)
+	fmt.Println(bytesAsString)
+	components := strings.Split(bytesAsString, "\r\n")
+	fmt.Println(components)
+	command := components[2]
+	arg := ""
+	if len(components)-1 > 4 {
+		arg = components[4]
+	}
+	return strings.ToLower(command), arg
+}
+
+func encodeBulkString(s string) string {
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
+}
+
 func handlePing(conn net.Conn) {
 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
+	buf := make([]byte, 1024)
+
 	for {
-		message, err := reader.ReadString('\n')
+		size, err := conn.Read(buf)
+
 		if err != nil {
 			fmt.Println("Error reading message: ", err.Error())
 			return
 		}
 
-		if message == "PING\r\n" {
+		command, arg := parseRedisCommand(buf[:size])
+
+		switch command {
+		case "ping":
 			_, err = conn.Write([]byte("+PONG\r\n"))
+
 			if err != nil {
 				fmt.Println("Received error: ", err.Error())
 				return
 			}
 			fmt.Println("Sent PONG")
-		} else {
-			fmt.Println("Received unknown message: ", message)
+		case "echo":
+			_, err = conn.Write([]byte(encodeBulkString(arg)))
+			if err != nil {
+				fmt.Println("Received error: ", err.Error())
+				return
+			}
+			fmt.Println("Sent ECHO")
+		default:
+			fmt.Println("Received unknown message: ", command)
 		}
 	}
 }
