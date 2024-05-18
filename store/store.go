@@ -33,7 +33,7 @@ func (rs *RedisStore) Get(key string) string {
 		}
 	}
 
-	return "$-1\r\n"
+	return "$-1\r\n."
 }
 
 func (rs *RedisStore) handleRemovalOfExpiredData(mili uint64, key string) {
