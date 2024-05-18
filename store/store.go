@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,14 +27,14 @@ func (rs *RedisStore) Set(res internal.ParsedResponse) {
 	go rs.handleRemovalOfExpiredData(res.Mili, res.Key)
 }
 
-func (rs *RedisStore) Get(key string) string {
+func (rs *RedisStore) Get(key string) (interface{}, error) {
 	for _, data := range rs.Data {
 		if data.Key == key {
-			return data.Value.(string)
+			return data.Value.(string), nil
 		}
 	}
 
-	return "$-1\r\n."
+	return nil, errors.New("no key found")
 }
 
 func (rs *RedisStore) handleRemovalOfExpiredData(mili uint64, key string) {
@@ -42,6 +43,7 @@ func (rs *RedisStore) handleRemovalOfExpiredData(mili uint64, key string) {
 		return
 	}
 	time.Sleep(time.Duration(mili) * time.Millisecond)
+	fmt.Println("Removing key ", key)
 	for i, data := range rs.Data {
 		if data.Key == key {
 			rs.Data = remove(rs.Data, i)

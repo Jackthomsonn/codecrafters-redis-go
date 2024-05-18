@@ -109,8 +109,16 @@ func handlePing(conn net.Conn, store *store.RedisStore) {
 			fmt.Println("Sent OK")
 		case "get":
 			fmt.Println("Received GET command with key: ", parsedResponse.Key)
-			val := store.Get(parsedResponse.Key)
-			_, err = conn.Write([]byte(encodeBulkString(val)))
+			val, err := store.Get(parsedResponse.Key)
+			if err != nil {
+				_, err = conn.Write([]byte("$-1\r\n"))
+				if err != nil {
+					fmt.Println("Received error: ", err.Error())
+					return
+				}
+				return
+			}
+			_, err = conn.Write([]byte(encodeBulkString(val.(string))))
 			if err != nil {
 				fmt.Println("Received error: ", err.Error())
 				return
