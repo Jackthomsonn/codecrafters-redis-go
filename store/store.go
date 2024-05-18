@@ -16,7 +16,7 @@ type RedisStore struct {
 
 type RedisObject struct {
 	Value  interface{}
-	Expire uint64
+	Expire int64
 }
 
 func NewRedisStore() *RedisStore {
@@ -25,9 +25,9 @@ func NewRedisStore() *RedisStore {
 
 func (rs *RedisStore) Set(res internal.ParsedResponse) {
 	rs.mu.Lock()
-	rs.Data[res.Key] = RedisObject{Value: res.Value, Expire: res.Mili}
+	expires := time.Now().Add(time.Duration(res.Mili)*time.Millisecond).UnixNano() / 1e6
+	rs.Data[res.Key] = RedisObject{Value: res.Value, Expire: expires}
 	rs.mu.Unlock()
-	go rs.handleRemovalOfExpiredData(res.Mili, res.Key)
 }
 
 func (rs *RedisStore) Get(key string) (interface{}, error) {
@@ -40,15 +40,16 @@ func (rs *RedisStore) Get(key string) (interface{}, error) {
 	return data.Value, nil
 }
 
-func (rs *RedisStore) handleRemovalOfExpiredData(mili uint64, key string) {
-	if mili == 0 {
-		return
-	}
-	time.Sleep(time.Duration(mili) * time.Millisecond)
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	if data, exists := rs.Data[key]; exists && data.Expire == mili {
-		delete(rs.Data, key)
-		fmt.Println("Removed expired key:", key)
+func RunRemovalCheck(rs *RedisStore) {
+	for {
+		rs.mu.Lock()
+		for key, data := range rs.Data {
+			if data.Expire < time.Now().UnixNano()/1e6 {
+				delete(rs.Data, key)
+				fmt.Println("Removed expired key:", key)
+			}
+		}
+		rs.mu.Unlock()
+		time.Sleep(1 * time.Second)
 	}
 }

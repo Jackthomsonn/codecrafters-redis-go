@@ -14,6 +14,8 @@ import (
 func main() {
 	redisStore := store.NewRedisStore()
 
+	go store.RunRemovalCheck(redisStore)
+
 	listener, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379:", err)
@@ -45,7 +47,7 @@ func parseRedisCommand(readBytes []byte) (string, internal.ParsedResponse, error
 
 	if len(components) > 10 {
 		res.Px = components[8]
-		mili, err := strconv.ParseUint(components[10], 10, 64)
+		mili, err := strconv.ParseInt(components[10], 10, 64)
 		if err != nil {
 			return "", res, fmt.Errorf("error parsing milli: %w", err)
 		}
