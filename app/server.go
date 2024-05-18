@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/internal"
 	"github.com/codecrafters-io/redis-starter-go/store"
 )
 
@@ -30,21 +32,35 @@ func main() {
 	}
 }
 
-func parseRedisCommand(readBytes []byte) (string, string, string) {
+func parseRedisCommand(readBytes []byte) (string, internal.ParsedResponse) {
+	res := internal.ParsedResponse{
+		Key:   "",
+		Value: "",
+		Px:    "",
+		Mili:  0,
+	}
 	bytesAsString := string(readBytes)
 	fmt.Println(bytesAsString)
 	components := strings.Split(bytesAsString, "\r\n")
 	fmt.Println(components)
 	command := components[2]
-	arg := ""
-	val := ""
+
+	if len(components)-1 > 10 {
+		res.Px = components[8]
+		mili, err := strconv.ParseUint(components[10], 10, 64)
+		if err != nil {
+			fmt.Println("Error parsing mili: ", err.Error())
+		}
+		res.Mili = mili
+	}
+
 	if len(components)-1 > 4 {
-		arg = components[4]
+		res.Key = components[4]
 		if len(components)-1 > 6 {
-			val = components[6]
+			res.Value = components[6]
 		}
 	}
-	return strings.ToLower(command), arg, val
+	return strings.ToLower(command), res
 }
 
 func encodeBulkString(s string) string {
@@ -64,7 +80,7 @@ func handlePing(conn net.Conn, store *store.RedisStore) {
 			return
 		}
 
-		command, arg, val := parseRedisCommand(buf[:size])
+		command, parsedResponse := parseRedisCommand(buf[:size])
 
 		switch command {
 		case "ping":
@@ -76,15 +92,15 @@ func handlePing(conn net.Conn, store *store.RedisStore) {
 			}
 			fmt.Println("Sent PONG")
 		case "echo":
-			_, err = conn.Write([]byte(encodeBulkString(arg)))
+			_, err = conn.Write([]byte(encodeBulkString(parsedResponse.Key)))
 			if err != nil {
 				fmt.Println("Received error: ", err.Error())
 				return
 			}
 			fmt.Println("Sent ECHO")
 		case "set":
-			fmt.Println("Received SET command with arg: ", arg)
-			store.Set(arg, val)
+			fmt.Println("Received SET command with key: ", parsedResponse.Key)
+			store.Set(parsedResponse)
 			_, err = conn.Write([]byte("+OK\r\n"))
 			if err != nil {
 				fmt.Println("Received error: ", err.Error())
@@ -92,8 +108,8 @@ func handlePing(conn net.Conn, store *store.RedisStore) {
 			}
 			fmt.Println("Sent OK")
 		case "get":
-			fmt.Println("Received GET command with arg: ", arg)
-			val := store.Get(arg)
+			fmt.Println("Received GET command with key: ", parsedResponse.Key)
+			val := store.Get(parsedResponse.Key)
 			_, err = conn.Write([]byte(encodeBulkString(val)))
 			if err != nil {
 				fmt.Println("Received error: ", err.Error())
