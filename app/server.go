@@ -7,125 +7,115 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/codecrafters-io/redis-starter-go/internal"
-	"github.com/codecrafters-io/redis-starter-go/store"
+	"github.com/jackthomsonn/redis-go-impl/internal"
+	"github.com/jackthomsonn/redis-go-impl/store"
 )
 
 func main() {
-	fmt.Println("Logs from your program will appear here!")
-	store := store.NewRedisStore()
+	redisStore := store.NewRedisStore()
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	listener, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
+		fmt.Println("Failed to bind to port 6379:", err)
 		os.Exit(1)
 	}
+	defer listener.Close()
 
 	for {
-		conn, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
+			fmt.Println("Error accepting connection:", err)
+			continue
 		}
 
-		go handlePing(conn, store)
+		go handleConnection(conn, redisStore)
 	}
 }
 
-func parseRedisCommand(readBytes []byte) (string, internal.ParsedResponse) {
-	res := internal.ParsedResponse{
-		Key:   "",
-		Value: "",
-		Px:    "",
-		Mili:  0,
-	}
+func parseRedisCommand(readBytes []byte) (string, internal.ParsedResponse, error) {
+	var res internal.ParsedResponse
 	bytesAsString := string(readBytes)
-	fmt.Println(bytesAsString)
 	components := strings.Split(bytesAsString, "\r\n")
-	fmt.Println(components)
-	command := components[2]
 
-	if len(components)-1 > 10 {
+	if len(components) < 3 {
+		return "", res, fmt.Errorf("invalid command format")
+	}
+
+	command := strings.ToLower(components[2])
+
+	if len(components) > 10 {
 		res.Px = components[8]
 		mili, err := strconv.ParseUint(components[10], 10, 64)
 		if err != nil {
-			fmt.Println("Error parsing mili: ", err.Error())
+			return "", res, fmt.Errorf("error parsing milli: %w", err)
 		}
 		res.Mili = mili
 	}
 
-	if len(components)-1 > 4 {
+	if len(components) > 4 {
 		res.Key = components[4]
-		if len(components)-1 > 6 {
-			res.Value = components[6]
-		}
 	}
-	return strings.ToLower(command), res
+
+	if len(components) > 6 {
+		res.Value = components[6]
+	}
+
+	return command, res, nil
 }
 
 func encodeBulkString(s string) string {
 	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
 }
 
-func handlePing(conn net.Conn, store *store.RedisStore) {
+func handleConnection(conn net.Conn, redisStore *store.RedisStore) {
 	defer conn.Close()
-
 	buf := make([]byte, 1024)
 
 	for {
 		size, err := conn.Read(buf)
-
 		if err != nil {
-			fmt.Println("Error reading message: ", err.Error())
+			fmt.Println("Error reading message:", err)
 			return
 		}
 
-		command, parsedResponse := parseRedisCommand(buf[:size])
+		command, parsedResponse, err := parseRedisCommand(buf[:size])
+		if err != nil {
+			fmt.Println("Error parsing command:", err)
+			return
+		}
 
 		switch command {
 		case "ping":
-			_, err = conn.Write([]byte("+PONG\r\n"))
-
-			if err != nil {
-				fmt.Println("Received error: ", err.Error())
+			if _, err := conn.Write([]byte("+PONG\r\n")); err != nil {
+				fmt.Println("Error sending PONG:", err)
 				return
 			}
-			fmt.Println("Sent PONG")
 		case "echo":
-			_, err = conn.Write([]byte(encodeBulkString(parsedResponse.Key)))
-			if err != nil {
-				fmt.Println("Received error: ", err.Error())
+			if _, err := conn.Write([]byte(encodeBulkString(parsedResponse.Key))); err != nil {
+				fmt.Println("Error sending ECHO:", err)
 				return
 			}
-			fmt.Println("Sent ECHO")
 		case "set":
-			fmt.Println("Received SET command with key: ", parsedResponse.Key)
-			store.Set(parsedResponse)
-			_, err = conn.Write([]byte("+OK\r\n"))
-			if err != nil {
-				fmt.Println("Received error: ", err.Error())
+			redisStore.Set(parsedResponse)
+			if _, err := conn.Write([]byte("+OK\r\n")); err != nil {
+				fmt.Println("Error sending OK:", err)
 				return
 			}
-			fmt.Println("Sent OK")
 		case "get":
-			fmt.Println("Received GET command with key: ", parsedResponse.Key)
-			val, err := store.Get(parsedResponse.Key)
+			val, err := redisStore.Get(parsedResponse.Key)
 			if err != nil {
-				_, err = conn.Write([]byte("$-1\r\n"))
-				if err != nil {
-					fmt.Println("Received error: ", err.Error())
+				if _, err := conn.Write([]byte("$-1\r\n")); err != nil {
+					fmt.Println("Error sending nil response:", err)
 					return
 				}
-				return
+			} else {
+				if _, err := conn.Write([]byte(encodeBulkString(val.(string)))); err != nil {
+					fmt.Println("Error sending GET response:", err)
+					return
+				}
 			}
-			_, err = conn.Write([]byte(encodeBulkString(val.(string))))
-			if err != nil {
-				fmt.Println("Received error: ", err.Error())
-				return
-			}
-			fmt.Println("Sent GET response")
 		default:
-			fmt.Println("Received unknown message: ", command)
+			fmt.Println("Received unknown command:", command)
 		}
 	}
 }

@@ -3,55 +3,52 @@ package store
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
-	"github.com/codecrafters-io/redis-starter-go/internal"
+	"github.com/jackthomsonn/redis-go-impl/internal"
 )
 
 type RedisStore struct {
-	Data []RedisObject
+	Data map[string]RedisObject
+	mu   sync.Mutex
 }
 
 type RedisObject struct {
-	Key    string
 	Value  interface{}
 	Expire uint64
 }
 
 func NewRedisStore() *RedisStore {
-	return &RedisStore{Data: []RedisObject{}}
+	return &RedisStore{Data: make(map[string]RedisObject)}
 }
 
 func (rs *RedisStore) Set(res internal.ParsedResponse) {
-	rs.Data = append(rs.Data, RedisObject{Key: res.Key, Value: res.Value, Expire: res.Mili})
+	rs.mu.Lock()
+	rs.Data[res.Key] = RedisObject{Value: res.Value, Expire: res.Mili}
+	rs.mu.Unlock()
 	go rs.handleRemovalOfExpiredData(res.Mili, res.Key)
 }
 
 func (rs *RedisStore) Get(key string) (interface{}, error) {
-	for _, data := range rs.Data {
-		if data.Key == key {
-			return data.Value.(string), nil
-		}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	data, exists := rs.Data[key]
+	if !exists {
+		return nil, errors.New("key not found")
 	}
-
-	return nil, errors.New("no key found")
+	return data.Value, nil
 }
 
 func (rs *RedisStore) handleRemovalOfExpiredData(mili uint64, key string) {
-	fmt.Println("Sleeping for ", mili)
 	if mili == 0 {
 		return
 	}
 	time.Sleep(time.Duration(mili) * time.Millisecond)
-	fmt.Println("Removing key ", key)
-	for i, data := range rs.Data {
-		if data.Key == key {
-			rs.Data = remove(rs.Data, i)
-		}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if data, exists := rs.Data[key]; exists && data.Expire == mili {
+		delete(rs.Data, key)
+		fmt.Println("Removed expired key:", key)
 	}
-}
-
-func remove(s []RedisObject, i int) []RedisObject {
-	s[i] = s[len(s)-1]
-	return s[:len(s)-1]
 }
