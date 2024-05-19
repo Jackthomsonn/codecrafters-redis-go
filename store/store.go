@@ -25,13 +25,13 @@ func NewRedisStore() *RedisStore {
 
 func (rs *RedisStore) Set(res internal.ParsedResponse) {
 	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
 	if res.Mili == 0 {
 		rs.Data[res.Key] = RedisObject{Value: res.Value, Expire: 0}
-		rs.mu.Unlock()
 	} else {
 		expires := time.Now().Add(time.Duration(res.Mili)*time.Millisecond).UnixNano() / 1e6
 		rs.Data[res.Key] = RedisObject{Value: res.Value, Expire: expires}
-		rs.mu.Unlock()
 	}
 }
 
